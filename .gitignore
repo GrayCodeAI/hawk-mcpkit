@@ -1,0 +1,4 @@
+# Binaries and coverage artifacts
+*.test
+*.out
+coverage.html
