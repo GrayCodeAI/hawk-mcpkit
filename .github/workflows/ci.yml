@@ -1,26 +1,171 @@
+# CI pipeline for hawk-mcpkit — a zero-hawk-eco-dependency foundation
+# library. No workspace clones needed: this repo depends on nothing in the
+# hawk ecosystem, only the Go standard library and mark3labs/mcp-go.
+
 name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26.4"
+
 jobs:
-  test:
+  format:
+    name: format
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version-file: go.mod
+          go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Boundary guard
+        run: bash ./scripts/check-ecosystem-boundaries.sh
+      - name: gofumpt
+        run: |
+          go install mvdan.cc/gofumpt@v0.10.0
+          out=$(gofumpt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofumpt would reformat:"
+            echo "$out"
+            exit 1
+          fi
+      - name: goimports
+        run: |
+          go install golang.org/x/tools/cmd/goimports@v0.30.0
+          out=$(goimports -l .)
+          if [ -n "$out" ]; then
+            echo "::error::goimports would reformat:"
+            echo "$out"
+            exit 1
+          fi
 
-      - name: Run tests
-        run: go test ./...
+  module:
+    name: module hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: go mod tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet -- go.mod go.sum; then
+            echo "::error::go.mod / go.sum out of date — run 'go mod tidy'"
+            git diff -- go.mod go.sum
+            exit 1
+          fi
+      - name: go mod verify
+        run: go mod verify
+
+  vet:
+    name: vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: go vet
+        run: go vet ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    needs: [format, vet]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Boundary guard
+        run: bash ./scripts/check-ecosystem-boundaries.sh
+      - name: Run golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.0
+          golangci-lint run --timeout=5m
+
+  test:
+    name: test (race + coverage)
+    runs-on: ubuntu-latest
+    needs: [format, vet]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Boundary guard
+        run: bash ./scripts/check-ecosystem-boundaries.sh
+      - name: Test with race detector
+        run: go test ./... -race -count=1 -shuffle=on -coverprofile=coverage.out -covermode=atomic -timeout=120s
+      - name: Upload coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ github.job }}
+          path: coverage.out
+          retention-days: 30
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    needs: [format, vet]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck ./...
+
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: trufflesecurity/trufflehog@0fa069c12f0c7baf431041cd1e564a9c5058846c # main 2026-05-18
+        with:
+          extra_args: --only-verified
+
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs: [format, lint, test, security]
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build (library — cross-compile all packages)
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -trimpath -v ./...
