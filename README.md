@@ -57,8 +57,12 @@ func main() {
 |------|------|
 | Create server | `s := mcpkit.New("name", "0.1.0")` |
 | Add a tool | `s.AddTool(tool, handler)` |
+| Add a prompt | `s.AddPrompt(prompt, handler)` |
+| Add a resource | `s.AddResource(resource, handler)` |
+| Add a resource template | `s.AddResourceTemplate(template, handler)` |
 | Serve stdio | `s.ServeStdio()` |
 | Serve HTTP | `s.ServeHTTP(":8080")` |
+| Serve SSE | `s.ServeSSE(":8080")` |
 | Extract string arg | `mcpkit.StrArg(req, "key")` |
 | Return JSON result | `mcpkit.JSONResult(map[string]any{...})` |
 
@@ -80,10 +84,14 @@ hawk-mcpkit Server
 
 | Symbol | Purpose |
 |--------|---------|
-| `New(name, version)` | Create a `*Server` with tool capabilities enabled. Returns `*Server`. |
-| `(*Server).AddTool(tool, handler)` | Register a tool and its handler. `handler` is `func(context.Context, mcplib.CallToolRequest) (*mcplib.CallToolResult, error)`. |
+| `New(name, version)` | Create a `*Server` with tool, prompt, and resource capabilities enabled. Returns `*Server`. |
+| `(*Server).AddTool(tool, handler)` | Register a tool and its handler. `handler` is `func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)`. |
+| `(*Server).AddPrompt(prompt, handler)` | Register a prompt and its handler. `handler` is `func(context.Context, mcp.CallPromptRequest) (mcp.PromptResult, error)`. |
+| `(*Server).AddResource(resource, handler)` | Register a resource and its handler. `handler` is `func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContent, error)`. |
+| `(*Server).AddResourceTemplate(template, handler)` | Register a resource template and its handler. |
 | `(*Server).ServeStdio()` | Serve MCP over stdin/stdout. Blocks until stream closes. Returns `error`. |
 | `(*Server).ServeHTTP(addr)` | Serve MCP over streamable HTTP at `/mcp`. Blocks until server stops. Returns `error`. |
+| `(*Server).ServeSSE(addr)` | Serve MCP over SSE transport. Blocks until server stops. Returns `error`. |
 | `(*Server).MCP()` | Escape hatch to the underlying `*mcpserver.MCPServer`. Use only for capabilities mcpkit does not wrap. |
 
 ### Handler Helpers
@@ -91,7 +99,7 @@ hawk-mcpkit Server
 | Symbol | Purpose |
 |--------|---------|
 | `StrArg(req, key)` | Extract a string argument from a tool call request. Returns `""` when absent or not a string. |
-| `JSONResult(v)` | Marshal `v` as indented JSON and return it as a text tool result. Returns `(*mcplib.CallToolResult, error)`. Error only when marshalling fails. |
+| `JSONResult(v)` | Marshal `v` as indented JSON and return it as a text tool result. Returns `(*mcp.CallToolResult, error)`. Error only when marshalling fails. |
 
 ## Ecosystem
 

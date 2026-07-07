@@ -6,11 +6,9 @@
 package mcpkit
 
 import (
-	"context"
 	"encoding/json"
-	"os"
 
-	mcplib "github.com/mark3labs/mcp-go/mcp"
+	mcp "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
@@ -20,16 +18,36 @@ type Server struct {
 	mcp *mcpserver.MCPServer
 }
 
-// New creates a named MCP server with tool capabilities enabled.
+// New creates a named MCP server with tool, prompt, and resource
+// capabilities enabled.
 func New(name, version string) *Server {
 	return &Server{
-		mcp: mcpserver.NewMCPServer(name, version, mcpserver.WithToolCapabilities(true)),
+		mcp: mcpserver.NewMCPServer(name, version,
+			mcpserver.WithToolCapabilities(true),
+			mcpserver.WithPromptCapabilities(true),
+			mcpserver.WithResourceCapabilities(false, true),
+		),
 	}
 }
 
 // AddTool registers a tool and its handler.
-func (s *Server) AddTool(tool mcplib.Tool, handler mcpserver.ToolHandlerFunc) {
+func (s *Server) AddTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
 	s.mcp.AddTool(tool, handler)
+}
+
+// AddPrompt registers a prompt and its handler.
+func (s *Server) AddPrompt(prompt mcp.Prompt, handler mcpserver.PromptHandlerFunc) {
+	s.mcp.AddPrompt(prompt, handler)
+}
+
+// AddResource registers a resource and its handler.
+func (s *Server) AddResource(resource mcp.Resource, handler mcpserver.ResourceHandlerFunc) {
+	s.mcp.AddResource(resource, handler)
+}
+
+// AddResourceTemplate registers a resource template and its handler.
+func (s *Server) AddResourceTemplate(template mcp.ResourceTemplate, handler mcpserver.ResourceTemplateHandlerFunc) {
+	s.mcp.AddResourceTemplate(template, handler)
 }
 
 // MCP returns the underlying mcp-go server, as an escape hatch for
@@ -38,10 +56,10 @@ func (s *Server) MCP() *mcpserver.MCPServer {
 	return s.mcp
 }
 
-// ServeStdio serves MCP over stdin/stdout and blocks until the stream is
-// closed or the context that mcp-go derives internally is done.
+// ServeStdio serves MCP over stdin/stdout and blocks until the stream
+// closes or the context that mcp-go derives internally is done.
 func (s *Server) ServeStdio() error {
-	return mcpserver.NewStdioServer(s.mcp).Listen(context.Background(), os.Stdin, os.Stdout)
+	return mcpserver.ServeStdio(s.mcp)
 }
 
 // ServeHTTP serves MCP over the streamable HTTP transport at
@@ -50,9 +68,15 @@ func (s *Server) ServeHTTP(addr string) error {
 	return mcpserver.NewStreamableHTTPServer(s.mcp).Start(addr)
 }
 
-// StrArg extracts a string argument from a tool call request. It returns
-// "" when the argument is absent or is not a string.
-func StrArg(req mcplib.CallToolRequest, key string) string {
+// ServeSSE serves MCP over the SSE transport at <addr> and blocks until
+// the server stops.
+func (s *Server) ServeSSE(addr string) error {
+	return mcpserver.NewSSEServer(s.mcp).Start(addr)
+}
+
+// StrArg extracts a string argument from a tool call request. Returns
+// "" when absent or not a string.
+func StrArg(req mcp.CallToolRequest, key string) string {
 	if v, ok := req.GetArguments()[key].(string); ok {
 		return v
 	}
@@ -60,11 +84,11 @@ func StrArg(req mcplib.CallToolRequest, key string) string {
 }
 
 // JSONResult marshals v as indented JSON and returns it as a text tool
-// result. It returns a protocol-level error only when marshalling fails.
-func JSONResult(v any) (*mcplib.CallToolResult, error) {
+// result. Returns a protocol-level error only when marshalling fails.
+func JSONResult(v any) (*mcp.CallToolResult, error) {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return nil, err
 	}
-	return mcplib.NewToolResultText(string(b)), nil
+	return mcp.NewToolResultText(string(b)), nil
 }
