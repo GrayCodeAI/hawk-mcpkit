@@ -22,7 +22,8 @@ type Server struct {
 // capabilities enabled.
 func New(name, version string) *Server {
 	return &Server{
-		mcp: mcpserver.NewMCPServer(name, version,
+		mcp: mcpserver.NewMCPServer(
+			name, version,
 			mcpserver.WithToolCapabilities(true),
 			mcpserver.WithPromptCapabilities(true),
 			mcpserver.WithResourceCapabilities(false, true),
