@@ -1,0 +1,13 @@
+# CODEOWNERS for hawk-mcpkit (shared MCP server scaffolding)
+* @GrayCodeAI/maintainers
+
+# Public API surface
+/mcpkit.go     @GrayCodeAI/llm-team
+/VERSION       @GrayCodeAI/maintainers
+
+# CI / release
+/.github/      @GrayCodeAI/devops-team
+/Makefile      @GrayCodeAI/devops-team
+
+# Documentation
+*.md           @GrayCodeAI/docs-team
