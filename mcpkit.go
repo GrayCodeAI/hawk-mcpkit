@@ -10,28 +10,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	mcp "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
+
+// MaxMCPRequestBodySize caps the body of any MCP-over-HTTP request. Shared by
+// the transports and the optional HTTP-level auth wrapper so every MCP HTTP
+// surface in the ecosystem has the same resource-exhaustion protection.
+const MaxMCPRequestBodySize = 1 << 20 // 1 MB
 
 // Server wraps an mcp-go MCPServer with the ecosystem's standard
 // transports (stdio and streamable HTTP).
 type Server struct {
 	mcp         *mcpserver.MCPServer
 	bearerToken string
+	httpToken   string
 }
 
 // New creates a named MCP server with tool, prompt, and resource
-// capabilities enabled.
-func New(name, version string) *Server {
+// capabilities enabled. Default capabilities match the ecosystem
+// convention (tool + prompt + read-only, no resource-list-changed
+// updates). Pass extra mcpserver.ServerOptions to override — they are
+// applied after the defaults, so a later option wins over an earlier one.
+// This lets repos like yaad (which expose a resource *list* rather than a
+// set of subscribable resources) tailor behavior without forks.
+func New(name, version string, opts ...mcpserver.ServerOption) *Server {
+	base := []mcpserver.ServerOption{
+		mcpserver.WithToolCapabilities(true),
+		mcpserver.WithPromptCapabilities(true),
+		mcpserver.WithResourceCapabilities(false, true),
+	}
 	return &Server{
-		mcp: mcpserver.NewMCPServer(
-			name, version,
-			mcpserver.WithToolCapabilities(true),
-			mcpserver.WithPromptCapabilities(true),
-			mcpserver.WithResourceCapabilities(false, true),
-		),
+		mcp: mcpserver.NewMCPServer(name, version, append(base, opts...)...),
 	}
 }
 
@@ -80,6 +92,24 @@ func (s *Server) RequireBearerToken(token string) {
 	s.bearerToken = token
 }
 
+// WithHTTPToken configures ServeHTTP and ServeHTTPWithShutdown to reject
+// every request that doesn't present a matching token, either as
+// "Authorization: Bearer <token>" or "X-API-Key: <token>". Pass "" (the
+// default) for no HTTP-level gate.
+//
+// Unlike RequireBearerToken (which only gates tool calls via mcp-go's tool
+// middleware), WithHTTPToken gates the entire HTTP surface — initialize,
+// resources, prompts, and tools alike — at the transport boundary. Use this
+// when the server holds data that shouldn't be discoverable without auth
+// (e.g. a per-user memory store). It is opt-in and does not affect repos
+// that leave it unset.
+//
+// ServeStdio is never affected, regardless of this setting, for the same
+// trust rationale as RequireBearerToken: stdio is a local subprocess pipe.
+func (s *Server) WithHTTPToken(token string) {
+	s.httpToken = token
+}
+
 // ServeStdio serves MCP over stdin/stdout and blocks until the stream
 // closes or the context that mcp-go derives internally is done.
 func (s *Server) ServeStdio() error {
@@ -87,25 +117,41 @@ func (s *Server) ServeStdio() error {
 }
 
 // ServeHTTP serves MCP over the streamable HTTP transport at
-// http://<addr>/mcp and blocks until the server stops. If
-// RequireBearerToken was called with a non-empty token, tool calls without
-// a matching "Authorization: Bearer <token>" header are rejected.
+// http://<addr>/mcp and blocks until the server stops.
+//
+// Auth precedence: if WithHTTPToken was set, every request is gated at the
+// transport boundary (bearer or X-API-Key). Otherwise, if RequireBearerToken
+// was set, only tool calls without a matching bearer header are rejected.
+// The two modes are mutually exclusive at the HTTP boundary — set at most
+// one.
 func (s *Server) ServeHTTP(addr string) error {
-	if s.bearerToken == "" {
-		return mcpserver.NewStreamableHTTPServer(s.mcp).Start(addr)
+	httpServer, err := s.buildHTTPServer(addr)
+	if err != nil {
+		return err
 	}
-	s.mcp.Use(bearerToolMiddleware(s.bearerToken))
-	httpServer := mcpserver.NewStreamableHTTPServer(
-		s.mcp,
-		mcpserver.WithHTTPContextFunc(bearerHTTPContextFunc(s.bearerToken)),
-	)
 	return httpServer.Start(addr)
+}
+
+// ServeHTTPWithShutdown serves MCP over the streamable HTTP transport at
+// http://<addr>/mcp and returns the underlying server so the caller can
+// invoke Shutdown(ctx) for graceful teardown. It launches the listener in a
+// background goroutine and returns immediately (once the server object
+// exists), so the caller owns the lifecycle. Poll UntilReady on the returned
+// server to wait for the listener to come up before calling Shutdown. See
+// ServeHTTP for auth semantics.
+func (s *Server) ServeHTTPWithShutdown(addr string) (*mcpserver.StreamableHTTPServer, error) {
+	httpServer, err := s.buildHTTPServer(addr)
+	if err != nil {
+		return nil, err
+	}
+	go func() { _ = httpServer.Start(addr) }()
+	return httpServer, nil
 }
 
 // ServeSSE serves MCP over the SSE transport at <addr> and blocks until
 // the server stops. If RequireBearerToken was called with a non-empty
 // token, tool calls without a matching "Authorization: Bearer <token>"
-// header are rejected.
+// header are rejected. WithHTTPToken does not apply to the SSE transport.
 func (s *Server) ServeSSE(addr string) error {
 	if s.bearerToken == "" {
 		return mcpserver.NewSSEServer(s.mcp).Start(addr)
@@ -116,6 +162,47 @@ func (s *Server) ServeSSE(addr string) error {
 		mcpserver.WithSSEContextFunc(bearerSSEContextFunc(s.bearerToken)),
 	)
 	return sseServer.Start(addr)
+}
+
+// buildHTTPServer constructs the streamable HTTP transport, applying the
+// configured auth mode. WithHTTPToken gates the whole HTTP handler;
+// otherwise RequireBearerToken (if set) gates tool calls via mcp-go's
+// bearer context-func + tool middleware.
+func (s *Server) buildHTTPServer(addr string) (*mcpserver.StreamableHTTPServer, error) {
+	streamable := mcpserver.NewStreamableHTTPServer(s.mcp)
+	if s.bearerToken != "" && s.httpToken == "" {
+		s.mcp.Use(bearerToolMiddleware(s.bearerToken))
+		streamable = mcpserver.NewStreamableHTTPServer(
+			s.mcp,
+			mcpserver.WithHTTPContextFunc(bearerHTTPContextFunc(s.bearerToken)),
+		)
+	}
+	if s.httpToken != "" {
+		streamable = mcpserver.NewStreamableHTTPServer(s.mcp, mcpserver.WithStreamableHTTPServer(&http.Server{
+			Addr:    addr,
+			Handler: httpTokenHandler(s.httpToken, streamable),
+		}))
+	}
+	return streamable, nil
+}
+
+// httpTokenHandler wraps a streamable MCP handler so that every request must
+// present a matching bearer or X-API-Key token, and caps the request body.
+func httpTokenHandler(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, MaxMCPRequestBodySize)
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if got == "" {
+			got = r.Header.Get("X-API-Key")
+		}
+		if got != token {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type bearerAuthorizedKey struct{}
