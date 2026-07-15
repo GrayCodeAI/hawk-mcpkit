@@ -90,6 +90,12 @@ func (s *Server) MCP() *mcpserver.MCPServer {
 // this check is meant to protect.
 func (s *Server) RequireBearerToken(token string) {
 	s.bearerToken = token
+	// Register once against the shared underlying server — not per-serve in
+	// buildHTTPServer, where a call-stack of ServeHTTP/WithShutdown would
+	// otherwise append duplicate middleware on every invocation.
+	if token != "" {
+		s.mcp.Use(bearerToolMiddleware(token))
+	}
 }
 
 // WithHTTPToken configures ServeHTTP and ServeHTTPWithShutdown to reject
@@ -155,7 +161,8 @@ func (s *Server) ServeHTTPWithShutdown(addr string) (*mcpserver.StreamableHTTPSe
 func (s *Server) buildHTTPServer(addr string) (*mcpserver.StreamableHTTPServer, error) {
 	streamable := mcpserver.NewStreamableHTTPServer(s.mcp)
 	if s.bearerToken != "" && s.httpToken == "" {
-		s.mcp.Use(bearerToolMiddleware(s.bearerToken))
+		// bearerToolMiddleware is registered once in RequireBearerToken; here
+		// we only attach the per-request context func that feeds it.
 		streamable = mcpserver.NewStreamableHTTPServer(
 			s.mcp,
 			mcpserver.WithHTTPContextFunc(bearerHTTPContextFunc(s.bearerToken)),
