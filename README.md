@@ -63,6 +63,7 @@ func main() {
 | Serve stdio | `s.ServeStdio()` |
 | Serve HTTP | `s.ServeHTTP(":8080")` |
 | Serve SSE | `s.ServeSSE(":8080")` |
+| Require a bearer token on HTTP/SSE tool calls | `s.RequireBearerToken("secret")` |
 | Extract string arg | `mcpkit.StrArg(req, "key")` |
 | Return JSON result | `mcpkit.JSONResult(map[string]any{...})` |
 
@@ -89,10 +90,26 @@ hawk-mcpkit Server
 | `(*Server).AddPrompt(prompt, handler)` | Register a prompt and its handler. `handler` is `func(context.Context, mcp.CallPromptRequest) (mcp.PromptResult, error)`. |
 | `(*Server).AddResource(resource, handler)` | Register a resource and its handler. `handler` is `func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContent, error)`. |
 | `(*Server).AddResourceTemplate(template, handler)` | Register a resource template and its handler. |
-| `(*Server).ServeStdio()` | Serve MCP over stdin/stdout. Blocks until stream closes. Returns `error`. |
+| `(*Server).ServeStdio()` | Serve MCP over stdin/stdout. Blocks until stream closes. Returns `error`. Never affected by `RequireBearerToken`. |
 | `(*Server).ServeHTTP(addr)` | Serve MCP over streamable HTTP at `/mcp`. Blocks until server stops. Returns `error`. |
 | `(*Server).ServeSSE(addr)` | Serve MCP over SSE transport. Blocks until server stops. Returns `error`. |
+| `(*Server).RequireBearerToken(token)` | Reject tool calls over HTTP/SSE that don't present a matching `Authorization: Bearer <token>` header. Pass `""` (the default) for no auth requirement. See [Security](#security) below. |
 | `(*Server).MCP()` | Escape hatch to the underlying `*mcpserver.MCPServer`. Use only for capabilities mcpkit does not wrap. |
+
+## Security
+
+`ServeHTTP` and `ServeSSE` are **unauthenticated by default** — anyone who can reach the listening address can call tools. Call `RequireBearerToken` before serving to require a static bearer token:
+
+```go
+s := mcpkit.New("my-server", "0.1.0")
+s.RequireBearerToken(os.Getenv("MY_SERVER_TOKEN"))
+// ...
+_ = s.ServeHTTP(":8080")
+```
+
+Requests without a matching `Authorization: Bearer <token>` header get a protocol-level error on tool calls. This only gates **tool calls** — mcp-go's resource/prompt middleware can only be wired at server-construction time, not added afterward the way tool middleware can, so gating those would require a larger restructure; mcpkit's resource capability is read-only, so tools are the primary surface this protects.
+
+`ServeStdio` is never gated by `RequireBearerToken` — stdio is a locally-spawned child process, not a network-exposed transport, so bearer-token auth doesn't apply to it.
 
 ### Handler Helpers
 
