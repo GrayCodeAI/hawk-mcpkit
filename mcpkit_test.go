@@ -166,21 +166,6 @@ func TestBearerHTTPContextFunc(t *testing.T) {
 	}
 }
 
-func TestBearerSSEContextFunc(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodGet, "http://example.com/sse", nil)
-	req.Header.Set("Authorization", "Bearer secret-123")
-	ctx := bearerSSEContextFunc("secret-123")(context.Background(), req)
-	if authorized, _ := ctx.Value(bearerAuthorizedKey{}).(bool); !authorized {
-		t.Error("expected authorized context for matching token")
-	}
-
-	req2, _ := http.NewRequest(http.MethodGet, "http://example.com/sse", nil)
-	ctx2 := bearerSSEContextFunc("secret-123")(context.Background(), req2)
-	if authorized, _ := ctx2.Value(bearerAuthorizedKey{}).(bool); authorized {
-		t.Error("expected unauthorized context for missing header")
-	}
-}
-
 func TestBearerToolMiddleware_RejectsUnauthorized(t *testing.T) {
 	called := false
 	next := func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {

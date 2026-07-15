@@ -73,7 +73,7 @@ func (s *Server) MCP() *mcpserver.MCPServer {
 	return s.mcp
 }
 
-// RequireBearerToken configures ServeHTTP and ServeSSE to reject tool
+// RequireBearerToken configures ServeHTTP to reject tool
 // calls that don't present a matching "Authorization: Bearer <token>"
 // header. Pass "" (the default) for no auth requirement.
 //
@@ -148,22 +148,6 @@ func (s *Server) ServeHTTPWithShutdown(addr string) (*mcpserver.StreamableHTTPSe
 	return httpServer, nil
 }
 
-// ServeSSE serves MCP over the SSE transport at <addr> and blocks until
-// the server stops. If RequireBearerToken was called with a non-empty
-// token, tool calls without a matching "Authorization: Bearer <token>"
-// header are rejected. WithHTTPToken does not apply to the SSE transport.
-func (s *Server) ServeSSE(addr string) error {
-	if s.bearerToken == "" {
-		return mcpserver.NewSSEServer(s.mcp).Start(addr)
-	}
-	s.mcp.Use(bearerToolMiddleware(s.bearerToken))
-	sseServer := mcpserver.NewSSEServer(
-		s.mcp,
-		mcpserver.WithSSEContextFunc(bearerSSEContextFunc(s.bearerToken)),
-	)
-	return sseServer.Start(addr)
-}
-
 // buildHTTPServer constructs the streamable HTTP transport, applying the
 // configured auth mode. WithHTTPToken gates the whole HTTP handler;
 // otherwise RequireBearerToken (if set) gates tool calls via mcp-go's
@@ -221,14 +205,8 @@ func bearerHTTPContextFunc(token string) mcpserver.HTTPContextFunc {
 	}
 }
 
-func bearerSSEContextFunc(token string) mcpserver.SSEContextFunc {
-	return func(ctx context.Context, r *http.Request) context.Context {
-		return context.WithValue(ctx, bearerAuthorizedKey{}, checkBearer(r, token))
-	}
-}
-
-// bearerToolMiddleware rejects a tool call unless bearerHTTPContextFunc /
-// bearerSSEContextFunc marked its context as authorized. A plain Go error
+// bearerToolMiddleware rejects a tool call unless bearerHTTPContextFunc
+// marked its context as authorized. A plain Go error
 // return (rather than a *mcp.CallToolResult) mirrors mcp-go's own
 // WithRecovery middleware, which mcp-go turns into a protocol-level error
 // response.
