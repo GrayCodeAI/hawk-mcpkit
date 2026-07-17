@@ -25,11 +25,11 @@ const MaxMCPRequestBodySize = 1 << 20 // 1 MB
 // Server wraps an mcp-go MCPServer with the ecosystem's standard
 // transports (stdio and streamable HTTP).
 type Server struct {
-	mcp                  *mcpserver.MCPServer
-	bearerToken          string
-	bearerMiddlewareSet  bool
-	httpToken            string
-	serverStartErr       chan error
+	mcp                 *mcpserver.MCPServer
+	bearerToken         string
+	bearerMiddlewareSet bool
+	httpToken           string
+	serverStartErr      chan error
 }
 
 // New creates a named MCP server with tool, prompt, and resource
