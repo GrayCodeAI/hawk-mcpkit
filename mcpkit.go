@@ -7,6 +7,7 @@ package mcpkit
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,9 +25,11 @@ const MaxMCPRequestBodySize = 1 << 20 // 1 MB
 // Server wraps an mcp-go MCPServer with the ecosystem's standard
 // transports (stdio and streamable HTTP).
 type Server struct {
-	mcp         *mcpserver.MCPServer
-	bearerToken string
-	httpToken   string
+	mcp                 *mcpserver.MCPServer
+	bearerToken         string
+	bearerMiddlewareSet bool
+	httpToken           string
+	serverStartErr      chan error
 }
 
 // New creates a named MCP server with tool, prompt, and resource
@@ -93,8 +96,9 @@ func (s *Server) RequireBearerToken(token string) {
 	// Register once against the shared underlying server — not per-serve in
 	// buildHTTPServer, where a call-stack of ServeHTTP/WithShutdown would
 	// otherwise append duplicate middleware on every invocation.
-	if token != "" {
+	if token != "" && !s.bearerMiddlewareSet {
 		s.mcp.Use(bearerToolMiddleware(token))
+		s.bearerMiddlewareSet = true
 	}
 }
 
@@ -150,7 +154,8 @@ func (s *Server) ServeHTTPWithShutdown(addr string) (*mcpserver.StreamableHTTPSe
 	if err != nil {
 		return nil, err
 	}
-	go func() { _ = httpServer.Start(addr) }()
+	s.serverStartErr = make(chan error, 1)
+	go func() { s.serverStartErr <- httpServer.Start(addr) }()
 	return httpServer, nil
 }
 
@@ -159,6 +164,9 @@ func (s *Server) ServeHTTPWithShutdown(addr string) (*mcpserver.StreamableHTTPSe
 // otherwise RequireBearerToken (if set) gates tool calls via mcp-go's
 // bearer context-func + tool middleware.
 func (s *Server) buildHTTPServer(addr string) (*mcpserver.StreamableHTTPServer, error) {
+	if s.bearerToken != "" && s.httpToken != "" {
+		return nil, fmt.Errorf("mcpkit: cannot set both RequireBearerToken and WithHTTPToken; use at most one")
+	}
 	streamable := mcpserver.NewStreamableHTTPServer(s.mcp)
 	if s.bearerToken != "" && s.httpToken == "" {
 		// bearerToolMiddleware is registered once in RequireBearerToken; here
@@ -186,7 +194,7 @@ func httpTokenHandler(token string, next http.Handler) http.Handler {
 		if got == "" {
 			got = r.Header.Get("X-API-Key")
 		}
-		if got != token {
+		if !constantTimeCompareStrings(got, token) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
@@ -196,10 +204,22 @@ func httpTokenHandler(token string, next http.Handler) http.Handler {
 	})
 }
 
+// constantTimeCompareStrings compares two strings in constant time. Returns
+// false when lengths differ without attempting the byte-level compare, which
+// is safe here because consumers must enforce equal-length tokens.
+func constantTimeCompareStrings(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 type bearerAuthorizedKey struct{}
 
 func checkBearer(r *http.Request, token string) bool {
-	return r.Header.Get("Authorization") == "Bearer "+token
+	expected := "Bearer " + token
+	got := r.Header.Get("Authorization")
+	return constantTimeCompareStrings(got, expected)
 }
 
 // bearerHTTPContextFunc validates the incoming request's Authorization
