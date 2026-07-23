@@ -313,6 +313,77 @@ func TestServeHTTPWithShutdown_Reachable(t *testing.T) {
 	t.Fatalf("server from ServeHTTPWithShutdown never became reachable: %v", lastErr)
 }
 
+// TestStartErr verifies that StartErr surfaces the HTTP server's start result:
+// nil before ServeHTTPWithShutdown is called, and a channel that receives the
+// Start return value (http.ErrServerClosed on graceful shutdown) once the
+// server has stopped.
+func TestStartErr(t *testing.T) {
+	s := New("test-server", "0.0.1")
+
+	// Before any HTTP server is started, StartErr reports nothing.
+	if ch := s.StartErr(); ch != nil {
+		t.Fatalf("expected nil StartErr before ServeHTTPWithShutdown, got %v", ch)
+	}
+
+	addr := "127.0.0.1:18831"
+	srv, err := s.ServeHTTPWithShutdown(addr)
+	if err != nil {
+		t.Fatalf("ServeHTTPWithShutdown returned error: %v", err)
+	}
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	ch := s.StartErr()
+	if ch == nil {
+		t.Fatal("expected non-nil StartErr after ServeHTTPWithShutdown")
+	}
+
+	// Start runs in a background goroutine and only sets the internal
+	// http.Server once it begins ListenAndServe. Poll the endpoint until it is
+	// reachable so that the subsequent Shutdown actually targets a live server
+	// (per the documented "poll UntilReady before Shutdown" contract).
+	conn := &http.Client{Timeout: 500 * time.Millisecond}
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-03-26",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "0.0.1"},
+		},
+	})
+	ready := false
+	for i := 0; i < 40; i++ {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/mcp", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		resp, err := conn.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			ready = true
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("server never became reachable before Shutdown")
+	}
+
+	// Start blocks until the server stops, so StartErr only receives once the
+	// server has shut down. A graceful Shutdown makes Start return
+	// http.ErrServerClosed.
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown returned error: %v", err)
+	}
+
+	select {
+	case startErr := <-ch:
+		if startErr == nil {
+			t.Fatal("expected a non-nil StartErr (http.ErrServerClosed) after shutdown")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for StartErr to receive the shutdown result")
+	}
+}
+
 func TestWithHTTPToken_RejectsMissing(t *testing.T) {
 	s := New("test-server", "0.0.1")
 	s.WithHTTPToken("secret-123")
