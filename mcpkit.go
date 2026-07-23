@@ -159,6 +159,13 @@ func (s *Server) ServeHTTPWithShutdown(addr string) (*mcpserver.StreamableHTTPSe
 	return httpServer, nil
 }
 
+// StartErr returns a channel that receives the error (or nil) from the
+// background HTTP server goroutine started by ServeHTTPWithShutdown.
+// Returns nil if no HTTP server has been started.
+func (s *Server) StartErr() <-chan error {
+	return s.serverStartErr
+}
+
 // buildHTTPServer constructs the streamable HTTP transport, applying the
 // configured auth mode. WithHTTPToken gates the whole HTTP handler;
 // otherwise RequireBearerToken (if set) gates tool calls via mcp-go's
