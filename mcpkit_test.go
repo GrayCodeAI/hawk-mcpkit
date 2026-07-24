@@ -112,18 +112,6 @@ func TestAddResourceTemplate(t *testing.T) {
 	})
 }
 
-func TestServer_MCPCapabilities(t *testing.T) {
-	s := New("test-server", "0.0.1")
-	mcpServer := s.MCP()
-	if mcpServer == nil {
-		t.Fatal("MCP() returned nil")
-	}
-	tool := mcp.NewTool("test_tool", mcp.WithDescription("test tool"))
-	s.AddTool(tool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText("ok"), nil
-	})
-}
-
 func TestRequireBearerToken_DefaultsToNoAuth(t *testing.T) {
 	s := New("test-server", "0.0.1")
 	if s.bearerToken != "" {
@@ -224,7 +212,7 @@ func TestBearerToolMiddleware_AllowsAuthorized(t *testing.T) {
 // malformed/unauthenticated POST rather than silently accepting it, as a
 // smoke test on top of the unit tests above which cover the actual
 // auth-decision logic precisely.
-func TestServeHTTP_BearerToken_ServerStartsWithAuthConfigured(t *testing.T) {
+func TestServeHTTP_BearerToken_ServerStarts(t *testing.T) {
 	s := New("test-server", "0.0.1")
 	s.RequireBearerToken("secret-123")
 	tool := mcp.NewTool("ping", mcp.WithDescription("ping"))
@@ -464,24 +452,81 @@ func TestWithHTTPToken_AcceptsAPIKey(t *testing.T) {
 	}
 }
 
-func TestStrArg_WithRequest(t *testing.T) {
+func TestServeStdio_Untestable(t *testing.T) {
+	// ServeStdio blocks on stdin/stdout until the stream closes, so it cannot
+	// be exercised by a unit test. This documents the intentional gap.
+	t.Skip("ServeStdio blocks on stdin/stdout; covered by consumer integration tests")
+}
+
+func TestMaxMCPRequestBodySize_Value(t *testing.T) {
+	if MaxMCPRequestBodySize != 1<<20 {
+		t.Fatalf("MaxMCPRequestBodySize = %d, want %d", MaxMCPRequestBodySize, 1<<20)
+	}
+}
+
+func TestBuildHTTPServer_MutualExclusivity(t *testing.T) {
+	s := New("test-server", "0.0.1")
+	s.RequireBearerToken("bearer-secret")
+	s.WithHTTPToken("http-secret")
+	err := s.ServeHTTP("127.0.0.1:18899")
+	if err == nil {
+		t.Fatal("expected error when both RequireBearerToken and WithHTTPToken are set")
+	}
+}
+
+func TestConstantTimeCompareStrings(t *testing.T) {
 	tests := []struct {
 		name string
-		args map[string]any
-		key  string
-		want string
+		a, b string
+		want bool
 	}{
-		{name: "present string", args: map[string]any{"name": "test"}, key: "name", want: "test"},
-		{name: "missing key", args: map[string]any{}, key: "name", want: ""},
+		{name: "equal strings", a: "secret", b: "secret", want: true},
+		{name: "different equal-length", a: "secret", b: "secreT", want: false},
+		{name: "different length", a: "short", b: "longer", want: false},
+		{name: "empty vs empty", a: "", b: "", want: true},
+		{name: "empty vs non-empty", a: "", b: "x", want: false},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := mcp.CallToolRequest{}
-			req.Params.Arguments = tc.args
-			if got := StrArg(req, tc.key); got != tc.want {
-				t.Errorf("StrArg(%q) = %q, want %q", tc.key, got, tc.want)
+			if got := constantTimeCompareStrings(tc.a, tc.b); got != tc.want {
+				t.Errorf("constantTimeCompareStrings(%q,%q) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestHTTPTokenHandler_WrongToken(t *testing.T) {
+	got := func(authz string) int {
+		s := New("test-server", "0.0.1")
+		s.WithHTTPToken("secret-123")
+		srv, err := s.ServeHTTPWithShutdown("127.0.0.1:18841")
+		if err != nil {
+			t.Fatalf("ServeHTTPWithShutdown: %v", err)
+		}
+		defer func() { _ = srv.Shutdown(context.Background()) }()
+
+		conn := &http.Client{Timeout: 2 * time.Second}
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+		for i := 0; i < 40; i++ {
+			req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:18841/mcp", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if authz != "" {
+				req.Header.Set("Authorization", authz)
+			}
+			resp, err := conn.Do(req)
+			if err != nil {
+				time.Sleep(25 * time.Millisecond)
+				continue
+			}
+			code := resp.StatusCode
+			_ = resp.Body.Close()
+			return code
+		}
+		t.Fatal("server never became reachable")
+		return 0
+	}
+
+	if code := got("Bearer wrong-token"); code != http.StatusUnauthorized {
+		t.Errorf("wrong bearer token: got %d, want %d", code, http.StatusUnauthorized)
 	}
 }

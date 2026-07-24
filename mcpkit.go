@@ -17,9 +17,10 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-// MaxMCPRequestBodySize caps the body of any MCP-over-HTTP request. Shared by
-// the transports and the optional HTTP-level auth wrapper so every MCP HTTP
-// surface in the ecosystem has the same resource-exhaustion protection.
+// MaxMCPRequestBodySize caps the body of any MCP-over-HTTP request so every
+// MCP HTTP surface in the ecosystem has the same resource-exhaustion
+// protection. It is applied in httpTokenHandler (HTTP-token path) and
+// capBody (bearer-only and no-auth paths).
 const MaxMCPRequestBodySize = 1 << 20 // 1 MB
 
 // Server wraps an mcp-go MCPServer with the ecosystem's standard
@@ -188,8 +189,28 @@ func (s *Server) buildHTTPServer(addr string) (*mcpserver.StreamableHTTPServer, 
 			Addr:    addr,
 			Handler: httpTokenHandler(s.httpToken, streamable),
 		}))
+	} else {
+		// Cap the request body on the bearer-only and no-auth paths so that
+		// every MCP HTTP surface has the same resource-exhaustion protection
+		// as the HTTP-token path (httpTokenHandler applies MaxBytesReader
+		// internally).
+		streamable = mcpserver.NewStreamableHTTPServer(s.mcp, mcpserver.WithStreamableHTTPServer(&http.Server{
+			Addr:    addr,
+			Handler: capBodyHandler(streamable),
+		}))
 	}
 	return streamable, nil
+}
+
+// capBodyHandler wraps next so that every request body is bounded by
+// MaxMCPRequestBodySize, protecting against resource exhaustion from
+// oversized payloads. It mirrors the cap that httpTokenHandler applies on
+// the HTTP-token path.
+func capBodyHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, MaxMCPRequestBodySize)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // httpTokenHandler wraps a streamable MCP handler so that every request must
@@ -211,9 +232,10 @@ func httpTokenHandler(token string, next http.Handler) http.Handler {
 	})
 }
 
-// constantTimeCompareStrings compares two strings in constant time. Returns
-// false when lengths differ without attempting the byte-level compare, which
-// is safe here because consumers must enforce equal-length tokens.
+// constantTimeCompareStrings compares two strings in constant time. It returns
+// false immediately when the lengths differ (leaking only the length mismatch,
+// which is required because subtle.ConstantTimeCompare needs equal-length
+// inputs). The caller is responsible for providing equal-length tokens.
 func constantTimeCompareStrings(a, b string) bool {
 	if len(a) != len(b) {
 		return false
