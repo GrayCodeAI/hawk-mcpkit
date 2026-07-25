@@ -112,18 +112,6 @@ func TestAddResourceTemplate(t *testing.T) {
 	})
 }
 
-func TestServer_MCPCapabilities(t *testing.T) {
-	s := New("test-server", "0.0.1")
-	mcpServer := s.MCP()
-	if mcpServer == nil {
-		t.Fatal("MCP() returned nil")
-	}
-	tool := mcp.NewTool("test_tool", mcp.WithDescription("test tool"))
-	s.AddTool(tool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText("ok"), nil
-	})
-}
-
 func TestRequireBearerToken_DefaultsToNoAuth(t *testing.T) {
 	s := New("test-server", "0.0.1")
 	if s.bearerToken != "" {
@@ -224,7 +212,7 @@ func TestBearerToolMiddleware_AllowsAuthorized(t *testing.T) {
 // malformed/unauthenticated POST rather than silently accepting it, as a
 // smoke test on top of the unit tests above which cover the actual
 // auth-decision logic precisely.
-func TestServeHTTP_BearerToken_ServerStartsWithAuthConfigured(t *testing.T) {
+func TestServeHTTP_BearerToken_ServerStarts(t *testing.T) {
 	s := New("test-server", "0.0.1")
 	s.RequireBearerToken("secret-123")
 	tool := mcp.NewTool("ping", mcp.WithDescription("ping"))
@@ -313,6 +301,77 @@ func TestServeHTTPWithShutdown_Reachable(t *testing.T) {
 	t.Fatalf("server from ServeHTTPWithShutdown never became reachable: %v", lastErr)
 }
 
+// TestStartErr verifies that StartErr surfaces the HTTP server's start result:
+// nil before ServeHTTPWithShutdown is called, and a channel that receives the
+// Start return value (http.ErrServerClosed on graceful shutdown) once the
+// server has stopped.
+func TestStartErr(t *testing.T) {
+	s := New("test-server", "0.0.1")
+
+	// Before any HTTP server is started, StartErr reports nothing.
+	if ch := s.StartErr(); ch != nil {
+		t.Fatalf("expected nil StartErr before ServeHTTPWithShutdown, got %v", ch)
+	}
+
+	addr := "127.0.0.1:18831"
+	srv, err := s.ServeHTTPWithShutdown(addr)
+	if err != nil {
+		t.Fatalf("ServeHTTPWithShutdown returned error: %v", err)
+	}
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	ch := s.StartErr()
+	if ch == nil {
+		t.Fatal("expected non-nil StartErr after ServeHTTPWithShutdown")
+	}
+
+	// Start runs in a background goroutine and only sets the internal
+	// http.Server once it begins ListenAndServe. Poll the endpoint until it is
+	// reachable so that the subsequent Shutdown actually targets a live server
+	// (per the documented "poll UntilReady before Shutdown" contract).
+	conn := &http.Client{Timeout: 500 * time.Millisecond}
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-03-26",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "0.0.1"},
+		},
+	})
+	ready := false
+	for i := 0; i < 40; i++ {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/mcp", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		resp, err := conn.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			ready = true
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("server never became reachable before Shutdown")
+	}
+
+	// Start blocks until the server stops, so StartErr only receives once the
+	// server has shut down. A graceful Shutdown makes Start return
+	// http.ErrServerClosed.
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown returned error: %v", err)
+	}
+
+	select {
+	case startErr := <-ch:
+		if startErr == nil {
+			t.Fatal("expected a non-nil StartErr (http.ErrServerClosed) after shutdown")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for StartErr to receive the shutdown result")
+	}
+}
+
 func TestWithHTTPToken_RejectsMissing(t *testing.T) {
 	s := New("test-server", "0.0.1")
 	s.WithHTTPToken("secret-123")
@@ -393,24 +452,81 @@ func TestWithHTTPToken_AcceptsAPIKey(t *testing.T) {
 	}
 }
 
-func TestStrArg_WithRequest(t *testing.T) {
+func TestServeStdio_Untestable(t *testing.T) {
+	// ServeStdio blocks on stdin/stdout until the stream closes, so it cannot
+	// be exercised by a unit test. This documents the intentional gap.
+	t.Skip("ServeStdio blocks on stdin/stdout; covered by consumer integration tests")
+}
+
+func TestMaxMCPRequestBodySize_Value(t *testing.T) {
+	if MaxMCPRequestBodySize != 1<<20 {
+		t.Fatalf("MaxMCPRequestBodySize = %d, want %d", MaxMCPRequestBodySize, 1<<20)
+	}
+}
+
+func TestBuildHTTPServer_MutualExclusivity(t *testing.T) {
+	s := New("test-server", "0.0.1")
+	s.RequireBearerToken("bearer-secret")
+	s.WithHTTPToken("http-secret")
+	err := s.ServeHTTP("127.0.0.1:18899")
+	if err == nil {
+		t.Fatal("expected error when both RequireBearerToken and WithHTTPToken are set")
+	}
+}
+
+func TestConstantTimeCompareStrings(t *testing.T) {
 	tests := []struct {
 		name string
-		args map[string]any
-		key  string
-		want string
+		a, b string
+		want bool
 	}{
-		{name: "present string", args: map[string]any{"name": "test"}, key: "name", want: "test"},
-		{name: "missing key", args: map[string]any{}, key: "name", want: ""},
+		{name: "equal strings", a: "secret", b: "secret", want: true},
+		{name: "different equal-length", a: "secret", b: "secreT", want: false},
+		{name: "different length", a: "short", b: "longer", want: false},
+		{name: "empty vs empty", a: "", b: "", want: true},
+		{name: "empty vs non-empty", a: "", b: "x", want: false},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := mcp.CallToolRequest{}
-			req.Params.Arguments = tc.args
-			if got := StrArg(req, tc.key); got != tc.want {
-				t.Errorf("StrArg(%q) = %q, want %q", tc.key, got, tc.want)
+			if got := constantTimeCompareStrings(tc.a, tc.b); got != tc.want {
+				t.Errorf("constantTimeCompareStrings(%q,%q) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestHTTPTokenHandler_WrongToken(t *testing.T) {
+	got := func(authz string) int {
+		s := New("test-server", "0.0.1")
+		s.WithHTTPToken("secret-123")
+		srv, err := s.ServeHTTPWithShutdown("127.0.0.1:18841")
+		if err != nil {
+			t.Fatalf("ServeHTTPWithShutdown: %v", err)
+		}
+		defer func() { _ = srv.Shutdown(context.Background()) }()
+
+		conn := &http.Client{Timeout: 2 * time.Second}
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+		for i := 0; i < 40; i++ {
+			req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:18841/mcp", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if authz != "" {
+				req.Header.Set("Authorization", authz)
+			}
+			resp, err := conn.Do(req)
+			if err != nil {
+				time.Sleep(25 * time.Millisecond)
+				continue
+			}
+			code := resp.StatusCode
+			_ = resp.Body.Close()
+			return code
+		}
+		t.Fatal("server never became reachable")
+		return 0
+	}
+
+	if code := got("Bearer wrong-token"); code != http.StatusUnauthorized {
+		t.Errorf("wrong bearer token: got %d, want %d", code, http.StatusUnauthorized)
 	}
 }

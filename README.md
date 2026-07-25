@@ -59,10 +59,12 @@ func main() {
 | Add a tool | `s.AddTool(tool, handler)` |
 | Add a prompt | `s.AddPrompt(prompt, handler)` |
 | Add a resource | `s.AddResource(resource, handler)` |
+| Add a graph resource | `s.AddGraphResource(uri, name, provider)` |
 | Add a resource template | `s.AddResourceTemplate(template, handler)` |
 | Serve stdio | `s.ServeStdio()` |
 | Serve HTTP | `s.ServeHTTP(":8080")` |
 | Require a bearer token on HTTP tool calls | `s.RequireBearerToken("secret")` |
+| Gate the whole HTTP surface with a token | `s.WithHTTPToken("secret")` |
 | Extract string arg | `mcpkit.StrArg(req, "key")` |
 | Return JSON result | `mcpkit.JSONResult(map[string]any{...})` |
 
@@ -72,8 +74,12 @@ func main() {
 hawk-mcpkit Server
 ├── wraps mark3labs/mcp-go MCPServer
 ├── AddTool() registers tools + handlers
-├── ServeStdio() → stdin/stdout transport
+├── AddGraphResource() exposes a typed, read-only graph JSON resource
+├── ServeStdio() → stdin/stdout transport (never auth-gated)
 ├── ServeHTTP(addr) → streamable HTTP at /mcp
+│   ├── WithHTTPToken gates the whole surface (bearer or X-API-Key)
+│   ├── RequireBearerToken gates only tool calls
+│   └── MaxBytesReader caps every request body to 1 MB
 ├── StrArg() → extract string arguments
 └── JSONResult() → marshal values as JSON text results
 ```
@@ -84,20 +90,26 @@ hawk-mcpkit Server
 
 | Symbol | Purpose |
 |--------|---------|
-| `New(name, version)` | Create a `*Server` with tool, prompt, and resource capabilities enabled. Returns `*Server`. |
+| `New(name, version, opts...)` | Create a `*Server` with tool, prompt, and resource capabilities enabled. `opts` are applied after the defaults so a later option wins. Returns `*Server`. |
 | `(*Server).AddTool(tool, handler)` | Register a tool and its handler. `handler` is `func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)`. |
 | `(*Server).AddPrompt(prompt, handler)` | Register a prompt and its handler. `handler` is `func(context.Context, mcp.CallPromptRequest) (mcp.PromptResult, error)`. |
 | `(*Server).AddResource(resource, handler)` | Register a resource and its handler. `handler` is `func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContent, error)`. |
+| `(*Server).AddGraphResource(uri, name, provider)` | Register a read-only graph JSON resource with `GraphMIMEType`. The producer owns schema validation, redaction, authorization, and size bounds. |
 | `(*Server).AddResourceTemplate(template, handler)` | Register a resource template and its handler. |
-| `(*Server).ServeStdio()` | Serve MCP over stdin/stdout. Blocks until stream closes. Returns `error`. Never affected by `RequireBearerToken`. |
+| `(*Server).ServeStdio()` | Serve MCP over stdin/stdout. Blocks until stream closes. Returns `error`. Never affected by `RequireBearerToken` or `WithHTTPToken`. |
 | `(*Server).ServeHTTP(addr)` | Serve MCP over streamable HTTP at `/mcp`. Blocks until server stops. Returns `error`. |
 | `(*Server).ServeHTTPWithShutdown(addr)` | Serve MCP over streamable HTTP at `/mcp` and return the underlying server for graceful `Shutdown`. Returns `(*mcpserver.StreamableHTTPServer, error)`. |
 | `(*Server).RequireBearerToken(token)` | Reject tool calls over HTTP that don't present a matching `Authorization: Bearer <token>` header. Pass `""` (the default) for no auth requirement. See [Security](#security) below. |
+| `(*Server).WithHTTPToken(token)` | Reject every HTTP request (initialize, resources, prompts, tools) that doesn't present a matching `Authorization: Bearer <token>` or `X-API-Key: <token>` header. Mutually exclusive with `RequireBearerToken`. See [Security](#security) below. |
+| `(*Server).StartErr()` | Returns a channel that receives the error (or nil) from the background HTTP server goroutine started by `ServeHTTPWithShutdown`, or `nil` if no server has been started. |
 | `(*Server).MCP()` | Escape hatch to the underlying `*mcpserver.MCPServer`. Use only for capabilities mcpkit does not wrap. |
+| `MaxMCPRequestBodySize` | Cap (1 MB) applied to every HTTP request body, so all MCP HTTP transports in the ecosystem have the same resource-exhaustion protection. |
 
 ## Security
 
-`ServeHTTP` and `ServeHTTPWithShutdown` are **unauthenticated by default** — anyone who can reach the listening address can call tools. Call `RequireBearerToken` before serving to require a static bearer token:
+`ServeHTTP` and `ServeHTTPWithShutdown` are **unauthenticated by default** — anyone who can reach the listening address can call tools. Choose one of the two mutually exclusive auth modes:
+
+### `RequireBearerToken` — gate tool calls only
 
 ```go
 s := mcpkit.New("my-server", "0.1.0")
@@ -108,7 +120,20 @@ _ = s.ServeHTTP(":8080")
 
 Requests without a matching `Authorization: Bearer <token>` header get a protocol-level error on tool calls. This only gates **tool calls** — mcp-go's resource/prompt middleware can only be wired at server-construction time, not added afterward the way tool middleware can, so gating those would require a larger restructure; mcpkit's resource capability is read-only, so tools are the primary surface this protects.
 
-`ServeStdio` is never gated by `RequireBearerToken` — stdio is a locally-spawned child process, not a network-exposed transport, so bearer-token auth doesn't apply to it.
+### `WithHTTPToken` — gate the whole HTTP surface
+
+```go
+s := mcpkit.New("my-server", "0.1.0")
+s.WithHTTPToken(os.Getenv("MY_SERVER_TOKEN"))
+// ...
+_ = s.ServeHTTP(":8080")
+```
+
+Every request — `initialize`, resources, prompts, and tools — must present a matching `Authorization: Bearer <token>` **or** `X-API-Key: <token>` header, or it is rejected with HTTP 401 at the transport boundary. Use this when the server holds data that shouldn't be discoverable without auth (e.g. a per-user memory store). This includes graph resources that contain repository, session, user, or tenant data: `RequireBearerToken` does not protect resources.
+
+The two modes are **mutually exclusive**: setting both returns an error from `ServeHTTP`.
+
+`ServeStdio` is never gated by either mode — stdio is a locally-spawned child process, not a network-exposed transport.
 
 ### Handler Helpers
 
@@ -116,6 +141,7 @@ Requests without a matching `Authorization: Bearer <token>` header get a protoco
 |--------|---------|
 | `StrArg(req, key)` | Extract a string argument from a tool call request. Returns `""` when absent or not a string. |
 | `JSONResult(v)` | Marshal `v` as indented JSON and return it as a text tool result. Returns `(*mcp.CallToolResult, error)`. Error only when marshalling fails. |
+| `GraphMIMEType` | Media type (`application/vnd.hawk.graph+json`) used by `AddGraphResource`. |
 
 ## Ecosystem
 
