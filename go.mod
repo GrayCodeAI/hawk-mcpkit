@@ -2,10 +2,7 @@ module github.com/GrayCodeAI/hawk-mcpkit
 
 go 1.26.5
 
-require (
-	github.com/GrayCodeAI/hawk-core-contracts v0.1.9-0.20260725105301-fb1cd2178841
-	github.com/mark3labs/mcp-go v0.49.0
-)
+require github.com/mark3labs/mcp-go v0.49.0
 
 require (
 	github.com/google/jsonschema-go v0.4.2 // indirect

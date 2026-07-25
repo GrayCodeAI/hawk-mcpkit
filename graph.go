@@ -3,11 +3,8 @@ package mcpkit
 
 import (
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
-
-	graphcontracts "github.com/GrayCodeAI/hawk-core-contracts/graph"
 )
 
 // MCPNode represents an MCP tool or resource as a graph node.
@@ -112,48 +109,4 @@ func (g *MCPGraph) ToJSON() ([]byte, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return json.Marshal(g)
-}
-
-// ToGraphSpec converts the MCP graph to a portable graph spec.
-func (g *MCPGraph) ToGraphSpec() *graphcontracts.GraphSpec {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	nodes := make([]graphcontracts.NodeSpec, 0, len(g.Nodes))
-	for id, node := range g.Nodes {
-		config := map[string]string{
-			"type":        node.Type,
-			"name":        node.Name,
-			"description": node.Description,
-		}
-		if node.URI != "" {
-			config["uri"] = node.URI
-		}
-		for k, v := range node.Attrs {
-			config[k] = fmt.Sprintf("%v", v)
-		}
-
-		nodes = append(nodes, graphcontracts.NodeSpec{
-			ID:     id,
-			Type:   graphcontracts.NodeTypeTool,
-			Name:   node.Name,
-			Config: config,
-		})
-	}
-
-	edges := make([]graphcontracts.EdgeSpec, 0, len(g.Edges))
-	for _, edge := range g.Edges {
-		edges = append(edges, graphcontracts.EdgeSpec{
-			From:   edge.From,
-			To:     edge.To,
-			Weight: edge.Weight,
-		})
-	}
-
-	return &graphcontracts.GraphSpec{
-		ID:    g.ID,
-		Name:  g.Name,
-		Nodes: nodes,
-		Edges: edges,
-	}
 }
