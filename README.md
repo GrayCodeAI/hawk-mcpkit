@@ -59,6 +59,7 @@ func main() {
 | Add a tool | `s.AddTool(tool, handler)` |
 | Add a prompt | `s.AddPrompt(prompt, handler)` |
 | Add a resource | `s.AddResource(resource, handler)` |
+| Add a graph resource | `s.AddGraphResource(uri, name, provider)` |
 | Add a resource template | `s.AddResourceTemplate(template, handler)` |
 | Serve stdio | `s.ServeStdio()` |
 | Serve HTTP | `s.ServeHTTP(":8080")` |
@@ -73,6 +74,7 @@ func main() {
 hawk-mcpkit Server
 ├── wraps mark3labs/mcp-go MCPServer
 ├── AddTool() registers tools + handlers
+├── AddGraphResource() exposes a typed, read-only graph JSON resource
 ├── ServeStdio() → stdin/stdout transport (never auth-gated)
 ├── ServeHTTP(addr) → streamable HTTP at /mcp
 │   ├── WithHTTPToken gates the whole surface (bearer or X-API-Key)
@@ -92,6 +94,7 @@ hawk-mcpkit Server
 | `(*Server).AddTool(tool, handler)` | Register a tool and its handler. `handler` is `func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)`. |
 | `(*Server).AddPrompt(prompt, handler)` | Register a prompt and its handler. `handler` is `func(context.Context, mcp.CallPromptRequest) (mcp.PromptResult, error)`. |
 | `(*Server).AddResource(resource, handler)` | Register a resource and its handler. `handler` is `func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContent, error)`. |
+| `(*Server).AddGraphResource(uri, name, provider)` | Register a read-only graph JSON resource with `GraphMIMEType`. The producer owns schema validation, redaction, authorization, and size bounds. |
 | `(*Server).AddResourceTemplate(template, handler)` | Register a resource template and its handler. |
 | `(*Server).ServeStdio()` | Serve MCP over stdin/stdout. Blocks until stream closes. Returns `error`. Never affected by `RequireBearerToken` or `WithHTTPToken`. |
 | `(*Server).ServeHTTP(addr)` | Serve MCP over streamable HTTP at `/mcp`. Blocks until server stops. Returns `error`. |
@@ -126,7 +129,7 @@ s.WithHTTPToken(os.Getenv("MY_SERVER_TOKEN"))
 _ = s.ServeHTTP(":8080")
 ```
 
-Every request — `initialize`, resources, prompts, and tools — must present a matching `Authorization: Bearer <token>` **or** `X-API-Key: <token>` header, or it is rejected with HTTP 401 at the transport boundary. Use this when the server holds data that shouldn't be discoverable without auth (e.g. a per-user memory store).
+Every request — `initialize`, resources, prompts, and tools — must present a matching `Authorization: Bearer <token>` **or** `X-API-Key: <token>` header, or it is rejected with HTTP 401 at the transport boundary. Use this when the server holds data that shouldn't be discoverable without auth (e.g. a per-user memory store). This includes graph resources that contain repository, session, user, or tenant data: `RequireBearerToken` does not protect resources.
 
 The two modes are **mutually exclusive**: setting both returns an error from `ServeHTTP`.
 
@@ -138,6 +141,7 @@ The two modes are **mutually exclusive**: setting both returns an error from `Se
 |--------|---------|
 | `StrArg(req, key)` | Extract a string argument from a tool call request. Returns `""` when absent or not a string. |
 | `JSONResult(v)` | Marshal `v` as indented JSON and return it as a text tool result. Returns `(*mcp.CallToolResult, error)`. Error only when marshalling fails. |
+| `GraphMIMEType` | Media type (`application/vnd.hawk.graph+json`) used by `AddGraphResource`. |
 
 ## Ecosystem
 
