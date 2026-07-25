@@ -26,17 +26,17 @@ type MCPNode struct {
 type MCPEdge struct {
 	From   string  `json:"from"`
 	To     string  `json:"to"`
-	Kind   string  `json:"kind"`   // "calls", "depends_on", "produces"
+	Kind   string  `json:"kind"` // "calls", "depends_on", "produces"
 	Weight float64 `json:"weight"`
 }
 
 // MCPGraph represents a graph of MCP tools and resources.
 type MCPGraph struct {
 	mu    sync.RWMutex
-	ID    string             `json:"id"`
-	Name  string             `json:"name"`
-	Nodes map[string]*MCPNode `json:"nodes"`
-	Edges []MCPEdge          `json:"edges"`
+	ID    string                 `json:"id"`
+	Name  string                 `json:"name"`
+	Nodes map[string]*MCPNode    `json:"nodes"`
+	Edges []MCPEdge              `json:"edges"`
 	Attrs map[string]interface{} `json:"attrs,omitempty"`
 }
 
@@ -151,9 +151,9 @@ func (g *MCPGraph) ToGraphSpec() *graphcontracts.GraphSpec {
 	}
 
 	return &graphcontracts.GraphSpec{
-		ID:     g.ID,
-		Name:   g.Name,
-		Nodes:  nodes,
-		Edges:  edges,
+		ID:    g.ID,
+		Name:  g.Name,
+		Nodes: nodes,
+		Edges: edges,
 	}
 }
