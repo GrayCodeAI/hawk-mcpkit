@@ -121,6 +121,38 @@ func (s *Server) WithHTTPToken(token string) {
 	s.httpToken = token
 }
 
+// GraphMIMEType is the ecosystem standard media type for graph projections.
+const GraphMIMEType = "application/vnd.hawk.graph+json"
+
+// AddGraphResource registers a read-only graph JSON resource.
+// The provider function must return a struct or map that can be marshaled to JSON.
+func (s *Server) AddGraphResource(uri, name string, provider func(context.Context) (any, error)) {
+	s.mcp.AddResource(
+		mcp.NewResource(uri, name, mcp.WithMIMEType(GraphMIMEType)),
+		graphResourceHandler(provider),
+	)
+}
+
+func graphResourceHandler(provider func(context.Context) (any, error)) mcpserver.ResourceHandlerFunc {
+	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		graph, err := provider(ctx)
+		if err != nil {
+			return nil, err
+		}
+		data, err := json.MarshalIndent(graph, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: GraphMIMEType,
+				Text:     string(data),
+			},
+		}, nil
+	}
+}
+
 // ServeStdio serves MCP over stdin/stdout and blocks until the stream
 // closes or the context that mcp-go derives internally is done.
 func (s *Server) ServeStdio() error {

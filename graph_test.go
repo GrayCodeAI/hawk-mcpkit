@@ -27,9 +27,9 @@ func TestGraphResourceHandler(t *testing.T) {
 		t.Fatalf("got %d resource contents, want 1", len(contents))
 	}
 
-	content, ok := contents[0].(*mcp.TextResourceContents)
+	content, ok := contents[0].(mcp.TextResourceContents)
 	if !ok {
-		t.Fatalf("got %T, want *mcp.TextResourceContents", contents[0])
+		t.Fatalf("got %T, want mcp.TextResourceContents", contents[0])
 	}
 	if content.URI != request.Params.URI {
 		t.Errorf("URI = %q, want %q", content.URI, request.Params.URI)

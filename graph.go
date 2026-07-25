@@ -1,5 +1,5 @@
 // Package graph provides graph-based MCP tool definitions for hawk-mcpkit.
-package graph
+package mcpkit
 
 import (
 	"encoding/json"
