@@ -1,0 +1,75 @@
+name: Feature request
+description: Suggest an improvement or a new SDK capability.
+title: "feat: <one-line summary>"
+labels: ["enhancement", "triage"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature. hawk-mcpkit is a thin Go wrapper
+        around `mark3labs/mcp-go` that provides construction, transports, and
+        handler helpers for the hawk ecosystem. Every feature is evaluated
+        against whether it serves **a single developer** building an MCP
+        server — i.e. it improves ergonomics, lowers boilerplate, or simplifies
+        integration.
+
+        Before submitting:
+        - Search [existing issues](https://github.com/GrayCodeAI/hawk-mcpkit/issues) to avoid duplicates.
+        - This repo must never import hawk-eco dependencies. If your feature
+          requires a hawk-ecosystem type, it belongs in the consuming engine.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of feature
+      description: What flavour of change is this?
+      options:
+        - "New server constructor option"
+        - "New transport (e.g. Unix socket, WebSocket)"
+        - "New handler helper (e.g. StrArg variant, JSONResult option)"
+        - "Auth / security (token gating, rate limiting)"
+        - "Resource / graph resource helper"
+        - "Tool / prompt registration helper"
+        - "Error handling / typed errors"
+        - "Tooling / CI / docs / packaging"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the user problem first. Solutions can come later.
+      placeholder: When I build an MCP server with mcpkit, I have to write boilerplate Y because the SDK doesn't expose X.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like the SDK to behave? Snippet of API you'd want.
+      render: go
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        What did you try? What do other MCP Go libraries (`mark3labs/mcp-go`,
+        `modelcontextprotocol/go-sdk`, `fifty-shades-of-go/mcp`) do? Why
+        isn't that enough?
+
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Foundation-layer fit
+      description: hawk-mcpkit avoids hawk-eco scope. Confirm this feature respects that.
+      options:
+        - label: Works with zero configuration (sensible defaults).
+        - label: Does not introduce a hawk-eco dependency.
+        - label: Does not break wire-compatibility with existing MCP clients.
+        - label: Has an escape hatch (override via parameter or option).
