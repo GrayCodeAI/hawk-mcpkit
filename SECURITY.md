@@ -45,16 +45,12 @@ We follow [coordinated vulnerability disclosure](https://en.wikipedia.org/wiki/C
 ## Security practices in this repo
 
 - **Dependency monitoring:** vulnerable dependencies are detected by
-  `govulncheck`, which runs on every CI build (see "Vulnerability scanning").
-- **Static analysis:** `golangci-lint` / `ruff` / `mypy` enforced in CI.
-- **Vulnerability scanning:** `govulncheck` (Go) / `pip-audit` (Python) run
-  on every CI build.
-- **Lockfiles:** `go.sum` / `pnpm-lock.yaml` / `pyproject.toml` are pinned
-  and committed.
-- **Reproducible builds:** release artefacts ship with SHA-256 checksums via
-  goreleaser.
-- **No secrets in source:** API keys are configuration, not constants. Pre-
-  commit hooks block accidental secret commits.
+  `govulncheck`, which runs on every CI build (see `.github/workflows/ci.yml`).
+- **Static analysis:** `golangci-lint` is enforced in CI.
+- **Vulnerability scanning:** `govulncheck` runs on every CI build.
+- **Secret detection:** `trufflehog` runs on every CI build.
+- **Reproducible builds:** the library is built with `go build`.
+- **No secrets in source:** API keys are configuration, not constants.
 
 ## Scope
 
@@ -62,8 +58,7 @@ This policy covers the code in this repository and the release artefacts
 published from it. It does not cover:
 
 - Third-party dependencies (report to upstream).
-- LLM provider services that hawk-mcpkit integrates with (report to the
-  provider).
+- LLM provider services (report to the provider).
 - Local filesystem misuse where an attacker already has shell access (out of
   threat model).
 
