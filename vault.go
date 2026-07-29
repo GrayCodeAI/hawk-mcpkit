@@ -20,25 +20,25 @@ import (
 type CredentialScope string
 
 const (
-	ScopeGlobal CredentialScope = "global"
+	ScopeGlobal  CredentialScope = "global"
 	ScopeProject CredentialScope = "project"
 	ScopeSession CredentialScope = "session"
 )
 
 // Credential holds a single secret with metadata.
 type Credential struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Type        string            `json:"type"` // "api_key", "oauth_token", "bearer_token", "password"
-	Value       string            `json:"-"`    // never serialized
-	Scope       CredentialScope   `json:"scope"`
-	ProjectID   string            `json:"project_id,omitempty"`
-	SessionID   string            `json:"session_id,omitempty"`
-	Tags        []string          `json:"tags,omitempty"`
-	Attrs       map[string]interface{} `json:"attrs,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
-	ExpiresAt   time.Time         `json:"expires_at,omitempty"`
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name"`
+	Type      string                 `json:"type"` // "api_key", "oauth_token", "bearer_token", "password"
+	Value     string                 `json:"-"`    // never serialized
+	Scope     CredentialScope        `json:"scope"`
+	ProjectID string                 `json:"project_id,omitempty"`
+	SessionID string                 `json:"session_id,omitempty"`
+	Tags      []string               `json:"tags,omitempty"`
+	Attrs     map[string]interface{} `json:"attrs,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at"`
+	ExpiresAt time.Time              `json:"expires_at,omitempty"`
 }
 
 // IsExpired reports whether the credential has expired.

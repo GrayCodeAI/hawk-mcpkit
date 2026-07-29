@@ -14,17 +14,17 @@ import (
 
 // ToolInfo holds metadata about a registered tool for search purposes.
 type ToolInfo struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Tags        []string               `json:"tags,omitempty"`
 	Attrs       map[string]interface{} `json:"attrs,omitempty"`
 }
 
 // ToolSearchIndex maintains an in-memory index of registered tools for
 // fast name/description/tag search.
 type ToolSearchIndex struct {
-	mu     sync.RWMutex
-	tools  map[string]*ToolInfo
+	mu    sync.RWMutex
+	tools map[string]*ToolInfo
 }
 
 // NewToolSearchIndex creates an empty tool search index.
