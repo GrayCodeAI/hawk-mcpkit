@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - Dead `MCPGraph`, `MCPNode`, `MCPEdge`, and `NewMCPGraph` graph types (`graph.go`): zero references in mcpkit or any ecosystem consumer (yaad, sight, inspect, hawk). `AddGraphResource`/`GraphMIMEType` are unaffected.
+- Unused `fmt` import held alive by a `var _ = fmt.Sprintf` placeholder in `vault.go`.
+
+### Changed
+
+- `vault.go`'s package documentation now states the store's actual behavior (in-memory only, no persistent backing, secrets not zeroed on `Delete`) instead of implying a pluggable persistent store exists.
 
 ## [0.1.5] - 2026-07-24
 

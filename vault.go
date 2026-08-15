@@ -4,14 +4,16 @@ package mcpkit
 // The vault stores API keys, tokens, and other secrets for MCP tools
 // that need to call external services.
 //
-// The vault is in-memory by default. For production use, it can be
-// backed by a persistent store (e.g., OS keychain, encrypted file).
+// The vault is strictly an in-memory store: credentials live only for the
+// lifetime of the process, there is no persistent-store backing (OS
+// keychain, encrypted file, ...) today, and Delete only drops the map
+// entry — secret values are not zeroed. Callers that need durability or
+// zeroization must layer it on top.
 //
 // This is inspired by composio's credential management pattern.
 
 import (
 	"crypto/subtle"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -176,6 +178,3 @@ func (s *Server) StoreCredential(c *Credential) {
 func (s *Server) GetCredential(id string) *Credential {
 	return s.Vault().Get(id)
 }
-
-// _ ensures fmt is used (for potential future error formatting).
-var _ = fmt.Sprintf
