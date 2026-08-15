@@ -8,6 +8,7 @@ package mcpkit
 // tool discovery protocol.
 
 import (
+	"sort"
 	"strings"
 	"sync"
 )
@@ -35,6 +36,11 @@ func NewToolSearchIndex() *ToolSearchIndex {
 }
 
 // IndexTool adds or updates a tool in the search index.
+//
+// NOTE: the index is NOT kept in sync with Server.AddTool — nothing
+// populates it automatically. A tool registered on the MCP server is
+// invisible to Search until it is explicitly indexed here, so index
+// each tool right where it is registered.
 func (idx *ToolSearchIndex) IndexTool(info *ToolInfo) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
@@ -42,7 +48,8 @@ func (idx *ToolSearchIndex) IndexTool(info *ToolInfo) {
 }
 
 // Search queries the tool index by name, description, or tags.
-// Returns tools matching any of the query terms (OR semantics).
+// Returns tools matching any of the query terms (OR semantics),
+// sorted by tool name for deterministic output.
 // If query is empty, returns all tools.
 func (idx *ToolSearchIndex) Search(query string) []*ToolInfo {
 	idx.mu.RLock()
@@ -53,6 +60,7 @@ func (idx *ToolSearchIndex) Search(query string) []*ToolInfo {
 		for _, t := range idx.tools {
 			result = append(result, t)
 		}
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 		return result
 	}
 
@@ -65,6 +73,7 @@ func (idx *ToolSearchIndex) Search(query string) []*ToolInfo {
 			result = append(result, t)
 		}
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
 }
 
@@ -135,14 +144,17 @@ func matchesSearch(t *ToolInfo, terms []string) bool {
 	return false
 }
 
-// SearchTools searches the server's registered tools by name, description,
+// SearchTools searches the server's tool search index by name, description,
 // or tags. This is a convenience method that wraps the tool search index.
+// Results are sorted by tool name.
 //
-// Usage:
+// WARNING: the index is NOT kept in sync with AddTool. Registering a tool
+// on the MCP server does not make it searchable — each tool must also be
+// indexed explicitly via IndexTool (or ToolSearch().IndexTool):
 //
 //	s := mcpkit.New("my-server", "1.0.0")
 //	s.AddTool(tool, handler)
-//	s.IndexTool(mcpkit.ToolInfo{Name: "my_tool", Description: "does X"})
+//	s.IndexTool(mcpkit.ToolInfo{Name: "my_tool", Description: "does X"}) // required
 //	results := s.SearchTools("X")
 func (s *Server) SearchTools(query string) []*ToolInfo {
 	if s.toolIndex == nil {
@@ -152,6 +164,11 @@ func (s *Server) SearchTools(query string) []*ToolInfo {
 }
 
 // IndexTool adds a tool to the search index.
+//
+// WARNING: the index is NOT kept in sync with AddTool, and AddTool does not
+// index anything — this call (or ToolSearch().IndexTool) is the only way a
+// tool becomes searchable. Index each tool right where it is registered,
+// or SearchTools will not find it.
 func (s *Server) IndexTool(info *ToolInfo) {
 	if s.toolIndex == nil {
 		s.toolIndex = NewToolSearchIndex()

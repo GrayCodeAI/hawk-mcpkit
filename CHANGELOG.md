@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `vault.go`'s package documentation now states the store's actual behavior (in-memory only, no persistent backing, secrets not zeroed on `Delete`) instead of implying a pluggable persistent store exists.
+- `ToolSearchIndex.Search` (and therefore `Server.SearchTools`) now returns results sorted by tool name for deterministic output; added `TestToolSearchIndexSearch_SortedOrder`.
+- `IndexTool` and `SearchTools` doc comments now warn loudly that the index is not kept in sync with `AddTool` — tools must be indexed explicitly to be searchable.
 
 ## [0.1.5] - 2026-07-24
 
