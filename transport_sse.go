@@ -94,7 +94,7 @@ func (s *Server) buildSSEServer(addr string) (*mcpserver.SSEServer, error) {
 	delegate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sseServer.ServeHTTP(w, r)
 	})
-	var handler http.Handler = capBodyHandler(delegate)
+	handler := capBodyHandler(delegate)
 	if s.httpToken != "" {
 		handler = httpTokenHandler(s.httpToken, delegate)
 	}
