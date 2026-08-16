@@ -1,6 +1,7 @@
 package mcpkit
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -96,6 +97,40 @@ func TestToolSearchIndexSearch(t *testing.T) {
 	results = idx.Search("nonexistent")
 	if len(results) != 0 {
 		t.Errorf("expected 0 results for 'nonexistent', got %d", len(results))
+	}
+}
+
+// TestToolSearchIndexSearch_SortedOrder asserts that Search returns results
+// sorted by tool name (both for a term query and for the empty query that
+// returns everything), regardless of insertion order. Search iterates an
+// internal map, so without an explicit sort the output order would be
+// nondeterministic.
+func TestToolSearchIndexSearch_SortedOrder(t *testing.T) {
+	t.Parallel()
+	idx := NewToolSearchIndex()
+
+	// Inserted deliberately out of alphabetical order.
+	idx.IndexTool(&ToolInfo{Name: "zeta_tool", Tags: []string{"shared"}})
+	idx.IndexTool(&ToolInfo{Name: "alpha_tool", Tags: []string{"shared"}})
+	idx.IndexTool(&ToolInfo{Name: "middle_tool", Tags: []string{"shared"}})
+
+	names := func(results []*ToolInfo) []string {
+		out := make([]string, 0, len(results))
+		for _, r := range results {
+			out = append(out, r.Name)
+		}
+		return out
+	}
+
+	want := []string{"alpha_tool", "middle_tool", "zeta_tool"}
+
+	if got := names(idx.Search("")); !slices.Equal(got, want) {
+		t.Errorf("empty query order = %v, want %v", got, want)
+	}
+
+	// All three match the shared tag, so the term query must also be sorted.
+	if got := names(idx.Search("shared")); !slices.Equal(got, want) {
+		t.Errorf("term query order = %v, want %v", got, want)
 	}
 }
 
